@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+messi_bot/messi.db
+venv/
+.venv/
