@@ -1,0 +1,614 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+@font-face{font-family:M;font-weight:500;src:url(fonts/montserrat-cyrillic-500-normal.woff2);unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:M;font-weight:500;src:url(fonts/montserrat-latin-500-normal.woff2);unicode-range:U+0000-00FF,U+2000-206F,U+2200-22FF}
+@font-face{font-family:M;font-weight:700;src:url(fonts/montserrat-cyrillic-700-normal.woff2);unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:M;font-weight:700;src:url(fonts/montserrat-latin-700-normal.woff2);unicode-range:U+0000-00FF,U+2000-206F,U+2200-22FF}
+@font-face{font-family:M;font-weight:800;src:url(fonts/montserrat-cyrillic-800-normal.woff2);unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:M;font-weight:800;src:url(fonts/montserrat-latin-800-normal.woff2);unicode-range:U+0000-00FF,U+2000-206F,U+2200-22FF}
+html,body{margin:0;background:#050b1c;overflow:hidden}
+canvas{display:block}
+</style></head>
+<body><canvas id="c"></canvas>
+<script>
+const W = 1920, H = 1080;
+const SCALE = +(new URLSearchParams(location.search).get('scale') || 2);
+const cv = document.getElementById('c');
+cv.width = W * SCALE; cv.height = H * SCALE;
+cv.style.width = W * SCALE + 'px'; cv.style.height = H * SCALE + 'px';
+const ctx = cv.getContext('2d');
+
+// ---------- palette ----------
+const TQ = '#19f5e0', OR = '#ff9a3c', PK = '#ff4fd8', WH = '#e9f6ff', GR = '#2fa8ff', VI = '#9d8cff';
+
+// ---------- helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eio = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const eout = k => 1 - Math.pow(1 - k, 3);
+const eback = k => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+// fade in at a (dur d), fade out at b (dur d2)
+const win = (t, a, b, d = .35, d2 = .35) => Math.min(eout(prog(t, a, a + d)), 1 - eio(prog(t, b - d2, b)));
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function mixC(c1, c2, k) { const a = hexRgb(c1), b = hexRgb(c2); return '#' + a.map((v, i) => Math.round(lerp(v, b[i], k)).toString(16).padStart(2, '0')).join(''); }
+function rgba(h, a) { const [r, g, b] = hexRgb(h); return `rgba(${r},${g},${b},${a})`; }
+function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
+
+// ---------- geometry ----------
+const A = [-3, -2, 0], B = [0, 2.8, 0], C = [3, -2, 0], Hp = [0, -2, 0];
+const add = (p, q) => [p[0] + q[0], p[1] + q[1], p[2] + q[2]];
+const sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+const mul = (p, k) => [p[0] * k, p[1] * k, p[2] * k];
+const lerp3 = (p, q, k) => [lerp(p[0], q[0], k), lerp(p[1], q[1], k), lerp(p[2], q[2], k)];
+const norm = p => { const l = Math.hypot(...p); return mul(p, 1 / l); };
+
+// ---------- camera keyframes ----------
+const KEYS = [
+  { t: 0,    tx: 0,   ty: 0.6,  yaw: .42, pitch: -.30, roll: -.06, S: 62 },
+  { t: 3.6,  tx: 0,   ty: 0.8,  yaw: 0,   pitch: 0,    roll: 0,    S: 84 },
+  { t: 4.6,  tx: 0,   ty: 0.25, yaw: 0,   pitch: 0,    roll: 0,    S: 96 },
+  { t: 6.8,  tx: -1.2,ty: 0.9,  yaw: -.16,pitch: .06,  roll: .02,  S: 112 },
+  { t: 8.4,  tx: 0,   ty: -1.0, yaw: .05, pitch: .14,  roll: 0,    S: 112 },
+  { t: 10.2, tx: 0,   ty: 0.25, yaw: 0,   pitch: 0,    roll: 0,    S: 94 },
+  { t: 11.4, tx: 0,   ty: 0.3,  yaw: .55, pitch: -.18, roll: 0,    S: 84 },
+  { t: 13.0, tx: 0,   ty: 0.3,  yaw: .55, pitch: -.18, roll: 0,    S: 84 },
+  { t: 14.3, tx: 0,   ty: 0.0,  yaw: 0,   pitch: 0,    roll: 0,    S: 100 },
+  { t: 15.8, tx: 0,   ty: -0.9, yaw: 0,   pitch: .08,  roll: 0,    S: 112 },
+  { t: 17.2, tx: 0,   ty: 0.25, yaw: 0,   pitch: 0,    roll: 0,    S: 96 },
+  { t: 19.3, tx: 0.2, ty: -1.1, yaw: -.08,pitch: .05,  roll: 0,    S: 126 },
+  { t: 20.6, tx: 0,   ty: -0.6, yaw: .06, pitch: 0,    roll: 0,    S: 108 },
+  { t: 21.7, tx: 0,   ty: 1.3,  yaw: -.05,pitch: -.06, roll: 0,    S: 124 },
+  { t: 23.0, tx: 0,   ty: 0.25, yaw: 0,   pitch: 0,    roll: 0,    S: 96 },
+  { t: 25.0, tx: 0,   ty: 0.25, yaw: 0,   pitch: 0,    roll: 0,    S: 96 },
+  { t: 26.6, tx: 0,   ty: -1.4, yaw: 0,   pitch: -.22, roll: 0,    S: 60 },
+  { t: 30,   tx: 0,   ty: -1.5, yaw: 0,   pitch: -.18, roll: 0,    S: 56 },
+];
+function camAt(t) {
+  let i = 0; while (i < KEYS.length - 2 && t > KEYS[i + 1].t) i++;
+  const a = KEYS[i], b = KEYS[i + 1], k = eio(prog(t, a.t, b.t));
+  const c = {}; for (const key of ['tx', 'ty', 'yaw', 'pitch', 'roll', 'S']) c[key] = lerp(a[key], b[key], k);
+  // gentle handheld drift
+  c.yaw += Math.sin(t * .7) * .015; c.pitch += Math.sin(t * .53 + 1) * .012;
+  c.D = 10;
+  return c;
+}
+let CAM;
+function proj(p) {
+  const c = CAM;
+  let x = p[0] - c.tx, y = p[1] - c.ty, z = p[2];
+  const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
+  const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+  const cp = Math.cos(c.pitch), sp = Math.sin(c.pitch);
+  const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  const cr = Math.cos(c.roll), sr = Math.sin(c.roll);
+  const x3 = x1 * cr - y2 * sr, y3 = x1 * sr + y2 * cr;
+  const k = c.D / (c.D + z2);
+  return [W / 2 + x3 * c.S * k, H / 2 - y3 * c.S * k, k, z2];
+}
+
+// ---------- object transform (fold + final spin + extrusion) ----------
+let FOLD = 0, SPIN = 0, TILT = 0;
+function obj(p, foldable = true) {
+  let [x, y, z] = p;
+  if (foldable && FOLD > 0 && x < -1e-6) {
+    const th = -FOLD;
+    const nx = x * Math.cos(th) + z * Math.sin(th), nz = -x * Math.sin(th) + z * Math.cos(th);
+    x = nx; z = nz;
+  }
+  if (SPIN) {
+    const cs = Math.cos(SPIN), sn = Math.sin(SPIN);
+    const yc = y - 0.4; // spin axis passes through the figure's middle
+    const nx = x * cs + z * sn, nz = -x * sn + z * cs; x = nx; z = nz;
+    const ct = Math.cos(TILT), st = Math.sin(TILT);
+    const ny = yc * ct - z * st, nz2 = yc * st + z * ct; y = ny + 0.4; z = nz2;
+  }
+  return proj([x, y, z]);
+}
+
+// ---------- drawing primitives ----------
+function glowPath(pts, color, w, alpha = 1, opts = {}) {
+  if (pts.length < 2 || alpha <= 0.001) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (opts.dash) ctx.setLineDash(opts.dash), ctx.lineDashOffset = opts.dashOffset || 0;
+  const passes = [[w * 7, .05], [w * 3.4, .14], [w * 1.8, .35], [w, 1]];
+  for (const [lw, a] of passes) {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    if (opts.close) ctx.closePath();
+    ctx.strokeStyle = rgba(color, a * alpha); ctx.lineWidth = lw; ctx.stroke();
+  }
+  // hot core
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  if (opts.close) ctx.closePath();
+  ctx.strokeStyle = rgba(mixC(color, '#ffffff', .65), .85 * alpha); ctx.lineWidth = Math.max(1, w * .35); ctx.stroke();
+  ctx.restore();
+}
+function glowDot(p, color, r, alpha = 1) {
+  if (alpha <= 0.001) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], r * 5);
+  g.addColorStop(0, rgba(color, .55 * alpha)); g.addColorStop(.25, rgba(color, .18 * alpha)); g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p[0], p[1], r * 5, 0, 7); ctx.fill();
+  ctx.fillStyle = rgba(mixC(color, '#ffffff', .7), alpha); ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function ring(p, color, r, alpha, w = 2) {
+  if (alpha <= 0.001) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = rgba(color, alpha); ctx.lineWidth = w; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.stroke();
+  ctx.strokeStyle = rgba(color, alpha * .25); ctx.lineWidth = w * 4; ctx.stroke();
+  ctx.restore();
+}
+function seg3(P, Q, k = 1, n = 2, foldable = true) {
+  const out = []; for (let i = 0; i <= n; i++) out.push(obj(lerp3(P, Q, k * i / n), foldable)); return out;
+}
+function fillPoly(pts3, color, alpha) {
+  if (alpha <= 0.001) return;
+  const p = pts3.map(q => obj(q));
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]); for (const q of p.slice(1)) ctx.lineTo(q[0], q[1]); ctx.closePath();
+  ctx.fillStyle = rgba(color, alpha); ctx.fill(); ctx.restore();
+}
+function text(str, x, y, { size = 40, weight = 700, color = WH, alpha = 1, align = 'center', glow = 18, spacing = 0, base = 'middle', stroke = null } = {}) {
+  if (alpha <= 0.001) return;
+  ctx.save();
+  ctx.font = `${weight} ${size}px M`; ctx.textAlign = align; ctx.textBaseline = base;
+  if (spacing) ctx.letterSpacing = spacing + 'px';
+  ctx.globalAlpha = alpha;
+  if (glow) { ctx.shadowColor = color; ctx.shadowBlur = glow; }
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+  ctx.shadowBlur = 0; ctx.fillStyle = mixC(color, '#ffffff', .55); ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function pill(str, cx, cy, color, alpha, { size = 50, padX = 46, padY = 26, scale = 1 } = {}) {
+  if (alpha <= 0.001) return;
+  ctx.save();
+  ctx.font = `700 ${size}px M`;
+  const tw = ctx.measureText(str).width, w = tw + padX * 2, h = size + padY * 2;
+  ctx.translate(cx, cy); ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+  roundRect(-w / 2, -h / 2, w, h, h / 2);
+  ctx.fillStyle = 'rgba(6,14,38,0.78)'; ctx.fill();
+  ctx.shadowColor = color; ctx.shadowBlur = 26; ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(scale, scale);
+  text(str, 0, 3, { size, color: WH, alpha, glow: 10 });
+  ctx.restore();
+}
+
+// ---------- background ----------
+const PARTS = (() => { const r = rng(7), a = []; for (let i = 0; i < 110; i++) a.push({ x: r() * W, y: r() * H, s: .6 + r() * 2.2, v: .2 + r() * .8, ph: r() * 6.28, c: [TQ, PK, OR, GR][Math.floor(r() * 4)] }); return a; })();
+function background(t) {
+  const g = ctx.createRadialGradient(W / 2, H * .45, 50, W / 2, H / 2, W * .75);
+  g.addColorStop(0, '#0f2150'); g.addColorStop(.5, '#081433'); g.addColorStop(1, '#030816');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // colored nebula glows
+  const nb = (x, y, r, c, a) => { const q = ctx.createRadialGradient(x, y, 0, x, y, r); q.addColorStop(0, rgba(c, a)); q.addColorStop(1, rgba(c, 0)); ctx.fillStyle = q; ctx.fillRect(0, 0, W, H); };
+  nb(W * .18 + Math.sin(t * .3) * 80, H * .25, 700, TQ, .07);
+  nb(W * .85 + Math.cos(t * .25) * 90, H * .78, 760, PK, .07);
+  nb(W * .7, H * .15, 520, OR, .035);
+
+  // perspective grid on plane z = 0.6
+  const gridA = Math.min(1, t / .8);
+  const Z = .6, R = 16;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = -R; i <= R; i++) {
+      const major = i % 5 === 0;
+      for (let s = 0; s < 32; s++) {
+        const u0 = -R + 2 * R * s / 32, u1 = -R + 2 * R * (s + 1) / 32;
+        const um = (u0 + u1) / 2;
+        const P0 = pass ? [i, u0, Z] : [u0, i, Z], P1 = pass ? [i, u1, Z] : [u1, i, Z];
+        const p0 = proj(P0), p1 = proj(P1);
+        if (p0[2] <= 0 || p1[2] <= 0 || p0[2] > 3 || p1[2] > 3) continue;
+        const r = Math.hypot(pass ? i : um, pass ? um : i);
+        const fall = clamp(1 - r / 13.5);
+        const a = gridA * fall * fall * (major ? .30 : .13);
+        if (a < .004) continue;
+        ctx.strokeStyle = rgba(GR, a); ctx.lineWidth = major ? 1.6 : 1;
+        ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+      }
+    }
+  }
+  // twinkling intersections
+  for (let i = -8; i <= 8; i++) for (let j = -6; j <= 6; j++) {
+    const tw = .5 + .5 * Math.sin(t * 2.2 + i * 1.7 + j * 2.3);
+    if (tw < .85) continue;
+    const p = proj([i, j, Z]); if (p[2] <= 0) continue;
+    const fall = clamp(1 - Math.hypot(i, j) / 10);
+    glowDot(p, GR, 1.6, gridA * fall * (tw - .85) * 4);
+  }
+  ctx.restore();
+
+  // particles
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const p of PARTS) {
+    const x = (p.x + t * 12 * p.v) % W, y = (p.y - t * 18 * p.v + H * 10) % H;
+    const a = (.25 + .25 * Math.sin(t * 1.5 + p.ph)) * gridA;
+    ctx.fillStyle = rgba(p.c, a); ctx.beginPath(); ctx.arc(x, y, p.s, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+}
+function vignette() {
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, W * .72);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,2,10,0.65)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+// ---------- scene pieces ----------
+function arcPts(V, P, Q, r, k = 1, n = 28, foldable = true) {
+  const a1 = Math.atan2(P[1] - V[1], P[0] - V[0]);
+  let a2 = Math.atan2(Q[1] - V[1], Q[0] - V[0]);
+  let d = a2 - a1; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+  const out = []; for (let i = 0; i <= n; i++) { const a = a1 + d * k * i / n; out.push(obj([V[0] + r * Math.cos(a), V[1] + r * Math.sin(a), V[2]], foldable)); }
+  return out;
+}
+function tick(P, Q, k, color, alpha, count = 1, at = .5) {
+  if (k <= 0) return;
+  const d = norm(sub(Q, P)), n = [-d[1], d[0], 0];
+  const M = lerp3(P, Q, at);
+  for (let i = 0; i < count; i++) {
+    const off = (i - (count - 1) / 2) * .16;
+    const c = add(M, mul(d, off));
+    const L = .26 * eback(clamp(k));
+    glowPath([obj(add(c, mul(n, -L))), obj(add(c, mul(n, L)))], color, 4, alpha);
+  }
+}
+function vertexLabel(name, P, t0, t, color = WH, offset = [0, 0], alpha = 1) {
+  const k = prog(t, t0, t0 + .45); if (k <= 0) return;
+  const p = obj(P);
+  const cen = obj([0, 0.27, 0]);
+  let dx = p[0] - cen[0], dy = p[1] - cen[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+  const s = eback(k);
+  ctx.save(); ctx.translate(p[0] + dx * 48 + offset[0], p[1] + dy * 48 + offset[1]); ctx.scale(s, s);
+  text(name, 0, 0, { size: 46, weight: 800, color, alpha: alpha * clamp(k * 2), glow: 22 });
+  ctx.restore();
+}
+
+// ---------- captions ----------
+const CAPS = [
+  { a: 4.6,  b: 7.25, s: 'Боковые стороны равны', c: TQ },
+  { a: 7.45, b: 10.1, s: 'AC — основание', c: OR },
+  { a: 10.4, b: 13.95, s: 'Сложим пополам — половины совпадают', c: PK },
+  { a: 14.1, b: 17.05, s: 'Углы при основании равны', c: PK },
+  { a: 17.25, b: 19.0, s: 'Опустим отрезок BH', c: WH },
+];
+function captions(t) {
+  for (const cp of CAPS) {
+    const a = win(t, cp.a, cp.b, .35, .3); if (a <= 0) continue;
+    const k = eback(prog(t, cp.a, cp.a + .45));
+    pill(cp.s, W / 2, H - 100 + (1 - eout(prog(t, cp.a, cp.a + .4))) * 60, cp.c, a, { scale: .85 + .15 * k });
+  }
+}
+
+// ---------- the frame ----------
+function render(t) {
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  CAM = camAt(t);
+  FOLD = 0; SPIN = 0; TILT = 0;
+  // fold: 10.8 -> 12.6 fold, hold, 13.2 -> 14.2 unfold
+  if (t > 10.8 && t < 14.3) FOLD = Math.PI * (t < 13.2 ? eio(prog(t, 10.8, 12.6)) : 1 - eio(prog(t, 13.2, 14.2)));
+  // final spin
+  if (t > 25.1) { const k = eio(prog(t, 25.2, 29.4)); SPIN = k * Math.PI * 2; TILT = Math.sin(k * Math.PI) * .32; }
+
+  background(t);
+
+  // soft glow behind figure
+  {
+    const c = obj([0, .2, 0]);
+    const a = clamp(t / 2) * .5;
+    const g = ctx.createRadialGradient(c[0], c[1], 0, c[0], c[1], CAM.S * 6);
+    g.addColorStop(0, rgba(VI, .16 * a)); g.addColorStop(1, rgba(VI, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  // ---- colors over time ----
+  const sideCol = mixC(VI, TQ, eio(prog(t, 4.5, 5.1)));
+  const baseCol = mixC(VI, OR, eio(prog(t, 7.2, 7.8)));
+  const sidePulse = 1 + .6 * Math.max(0, Math.sin(prog(t, 4.5, 5.6) * Math.PI));
+  const basePulse = 1 + .6 * Math.max(0, Math.sin(prog(t, 7.2, 8.3) * Math.PI));
+
+  // ---- point birth (0 - 0.7) ----
+  const birth = [[A, .15], [B, .3], [C, .45]];
+  for (const [P, t0] of birth) {
+    const k = prog(t, t0, t0 + .5);
+    if (k > 0 && t < 2.6) {
+      const p = obj(P);
+      ring(p, VI, 10 + 70 * eout(k), (1 - k) * .9, 2.5);
+      glowDot(p, WH, 5 * eback(clamp(k * 1.6)), 1 - prog(t, 2.0, 2.6) * .0);
+    }
+  }
+
+  // ---- extrusion (3D prism at the end) ----
+  const ext = eio(prog(t, 25.1, 26.0)) * .35;
+  if (ext > 0) {
+    const back = P => [P[0], P[1], P[2] + ext];
+    const a = .55;
+    glowPath(seg3(back(A), back(B)), TQ, 3, a); glowPath(seg3(back(B), back(C)), TQ, 3, a); glowPath(seg3(back(A), back(C)), OR, 3, a);
+    for (const P of [A, B, C]) glowPath([obj(P), obj(back(P))], WH, 2, .5);
+    fillPoly([A, B, C], TQ, .05);
+  }
+
+  // ---- fills ----
+  const fillA = .05 + .06 * win(t, 10.4, 14.4, .4, .4);
+  fillPoly([A, B, Hp], FOLD > 0 ? PK : TQ, t > 2 ? (FOLD > 0 ? .1 + .14 * Math.sin(Math.min(FOLD, Math.PI / 2)) : fillA * clamp(t - 2)) : 0);
+  fillPoly([Hp, B, C], TQ, t > 2 ? fillA * clamp(t - 2) : 0);
+
+  // ---- symmetry axis (10.2 - 17.0) ----
+  {
+    const k = eout(prog(t, 10.2, 10.9)), a = win(t, 10.2, 17.0, .3, .5);
+    if (k > 0 && a > 0) {
+      const top = [0, 3.8, 0], bot = [0, -3.0, 0];
+      glowPath(seg3(top, lerp3(top, bot, k), 1, 2, false), PK, 2.5, a * .8, { dash: [14, 12], dashOffset: -t * 40 });
+    }
+  }
+
+  // ---- triangle sides (grow 0.7 - 2.0) ----
+  const kAB = eio(prog(t, .7, 1.4)), kBC = eio(prog(t, 1.0, 1.7)), kCA = eio(prog(t, 1.3, 2.0));
+  const wSide = 5 * sidePulse, wBase = 5 * basePulse;
+  // AB
+  if (kAB > 0) { const pts = seg3(A, B, kAB, 2); glowPath(pts, sideCol, wSide); if (kAB < 1) glowDot(pts[pts.length - 1], WH, 6); }
+  // BC
+  if (kBC > 0) { const pts = seg3(B, C, kBC, 2); glowPath(pts, sideCol, wSide); if (kBC < 1) glowDot(pts[pts.length - 1], WH, 6); }
+  // CA split at H so the fold can move the left half
+  if (kCA > 0) {
+    const kk = kCA * 2;
+    const p1 = seg3(C, Hp, clamp(kk), 2); glowPath(p1, baseCol, wBase);
+    if (kk > 1) { const p2 = seg3(Hp, A, clamp(kk - 1), 2); glowPath(p2, baseCol, wBase); if (kCA < 1) glowDot(p2[p2.length - 1], WH, 6); }
+    else if (kCA < 1) glowDot(p1[p1.length - 1], WH, 6);
+  }
+  // completion flash
+  {
+    const k = prog(t, 2.0, 2.8);
+    if (k > 0 && k < 1) { const c = obj([0, .27, 0]); ring(c, WH, CAM.S * (1 + 4 * eout(k)), (1 - k) * .5, 3); }
+  }
+  // vertices
+  if (t > 1.95) for (const P of [A, B, C]) glowDot(obj(P), WH, 5, clamp((t - 1.95) * 3));
+
+  // ---- equal tick marks on AB and BC (5.0, 5.25) ----
+  {
+    const a = win(t, 5.0, 25.05, .2, .3) || (t > 25 ? 1 : 0);
+    tick(A, B, prog(t, 5.0, 5.35), TQ, a > 0 ? 1 : 0);
+    tick(B, C, prog(t, 5.25, 5.6), TQ, a > 0 ? 1 : 0);
+  }
+  // AB = BC formula
+  {
+    const a = win(t, 5.7, 10.1, .4, .35);
+    if (a > 0) {
+      const s = eback(prog(t, 5.7, 6.1));
+      ctx.save(); ctx.translate(W - 300, 210); ctx.scale(s, s);
+      text('AB = BC', 0, 0, { size: 68, weight: 800, color: TQ, alpha: a, glow: 28 });
+      ctx.restore();
+    }
+  }
+  // base label under AC
+  {
+    const a = win(t, 7.45, 10.2, .4, .4);
+    if (a > 0) {
+      const p = obj([0, -2.55, 0]);
+      const k = eback(prog(t, 7.45, 7.9));
+      ctx.save(); ctx.translate(p[0], p[1] + 12); ctx.scale(k, k);
+      text('основание', 0, 0, { size: 40, weight: 700, color: OR, alpha: a, glow: 20, spacing: 3 });
+      ctx.restore();
+      // bracket under base
+      const y = -2.3;
+      glowPath([obj([-3, y + .12, 0]), obj([-3, y, 0]), obj([3, y, 0]), obj([3, y + .12, 0])].map(q => q), OR, 2, a * .7 * eout(prog(t, 7.45, 8.0)));
+    }
+  }
+
+  // ---- fold check flash (12.6 - 13.2) ----
+  {
+    const k = prog(t, 12.55, 13.3);
+    if (k > 0 && k < 1) {
+      fillPoly([Hp, B, C], WH, .25 * Math.sin(k * Math.PI));
+      const c = obj([1, -.4, 0]); ring(c, PK, CAM.S * (.6 + 3 * eout(k)), (1 - k) * .7, 3);
+    }
+  }
+
+  // ---- base angles (14.0 - ) ----
+  {
+    const kA = eout(prog(t, 14.0, 14.6)), kC = eout(prog(t, 14.25, 14.85));
+    const a = t < 17 ? 1 : (t < 25 ? .55 : 1);
+    const pulse = 1 + .5 * Math.max(0, Math.sin(prog(t, 14.6, 15.6) * Math.PI * 2));
+    for (const r of [.62, .78]) {
+      if (kA > 0) glowPath(arcPts(A, C, B, r, kA), PK, 3.5 * pulse, a);
+      if (kC > 0) glowPath(arcPts(C, A, B, r, kC), PK, 3.5 * pulse, a);
+    }
+    // fill wedge
+    if (kA > 0 && t < 17.2) {
+      for (const [V, P, Q, kk] of [[A, C, B, kA], [C, A, B, kC]]) {
+        const pts = arcPts(V, P, Q, .78, kk); const v = obj(V);
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.beginPath(); ctx.moveTo(v[0], v[1]); for (const p of pts) ctx.lineTo(p[0], p[1]); ctx.closePath();
+        ctx.fillStyle = rgba(PK, .18 * win(t, 14.0, 17.2, .4, .5)); ctx.fill(); ctx.restore();
+      }
+    }
+    const fa = win(t, 15.0, 17.05, .4, .35);
+    if (fa > 0) {
+      const s = eback(prog(t, 15.0, 15.4));
+      ctx.save(); ctx.translate(W - 300, 210); ctx.scale(s, s);
+      text('∠A = ∠C', 0, 0, { size: 68, weight: 800, color: PK, alpha: fa, glow: 28 });
+      ctx.restore();
+    }
+  }
+
+  // ---- segment BH (17.3 - ) ----
+  {
+    const k = eio(prog(t, 17.4, 18.4));
+    // role colors: 19.1 height(pink), 20.4 median(tq), 21.5 bisector(or), 22.9 all
+    let col = WH;
+    if (t > 19.0) col = mixC(WH, PK, prog(t, 19.0, 19.3));
+    if (t > 20.3) col = mixC(PK, TQ, prog(t, 20.3, 20.6));
+    if (t > 21.4) col = mixC(TQ, OR, prog(t, 21.4, 21.7));
+    if (k > 0) {
+      const pts = seg3(B, Hp, k, 2, false);
+      if (t < 22.85) {
+        glowPath(pts, col, 5.5);
+      } else {
+        // tri-colour braided segment
+        const kk = prog(t, 22.85, 23.3);
+        const cols = [PK, TQ, OR];
+        const b = obj(B, false), h = obj(Hp, false);
+        const dx = h[0] - b[0], dy = h[1] - b[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+        cols.forEach((c, i) => {
+          const off = (i - 1) * 9 * eout(kk);
+          const ph = t * 6 + i * 2.1;
+          const wob = [];
+          for (let s = 0; s <= 24; s++) { const u = s / 24; const o = off + Math.sin(ph + u * 9) * 3 * kk; wob.push([b[0] + dx * u + nx * o, b[1] + dy * u + ny * o]); }
+          glowPath(wob, c, 4.2, 1);
+        });
+      }
+      if (k < 1) glowDot(pts[pts.length - 1], WH, 7);
+      if (k >= 1) glowDot(obj(Hp, false), col, 5);
+    }
+    // right angle at H (height)
+    const kh = eout(prog(t, 19.1, 19.5));
+    if (kh > 0) {
+      const s = .38 * kh, a = t < 25 ? (t < 20.3 ? 1 : .6) : 1;
+      glowPath([obj([0, -2 + s, 0], false), obj([s, -2 + s, 0], false), obj([s, -2, 0], false)], PK, 3, a);
+    }
+    // median ticks
+    const km = prog(t, 20.45, 20.8);
+    if (km > 0) { const a = t < 21.4 ? 1 : .6; tick(A, Hp, km, TQ, a, 2); tick(Hp, C, prog(t, 20.6, 20.95), TQ, a, 2); }
+    // bisector arcs at B
+    const kb = eout(prog(t, 21.55, 22.0));
+    if (kb > 0) {
+      glowPath(arcPts(B, A, Hp, .9, kb, 20, false), OR, 3.2, 1);
+      glowPath(arcPts(B, C, Hp, .9, kb, 20, false), OR, 3.2, 1);
+    }
+    // role list (right side)
+    const roles = [[19.1, 'Высота', PK, '⊥ основанию'], [20.4, 'Медиана', TQ, 'AH = HC'], [21.5, 'Биссектриса', OR, '∠ABH = ∠CBH']];
+    roles.forEach(([t0, name, c, sub2], i) => {
+      const a = win(t, t0, 25.0, .35, .4); if (a <= 0) return;
+      const x = W - 360 + (1 - eout(prog(t, t0, t0 + .45))) * 160, y = 330 + i * 150;
+      const active = (i === 2 ? t >= t0 && t < 22.85 : t >= t0 && t < roles[i + 1][0]) ? 1 : 0;
+      const hi = t > 22.85 ? .5 + .5 * Math.sin((t - 22.85) * 8 - i * 1.2) : active;
+      ctx.save(); ctx.globalAlpha = a;
+      roundRect(x - 150, y - 58, 300 + 160, 116, 22);
+      ctx.fillStyle = 'rgba(6,14,38,0.72)'; ctx.fill();
+      ctx.shadowColor = c; ctx.shadowBlur = 10 + 24 * hi; ctx.strokeStyle = rgba(c, .45 + .55 * hi); ctx.lineWidth = 2 + 2 * hi; ctx.stroke();
+      ctx.shadowBlur = 0; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x - 108, y, 13, 0, 7); ctx.fill();
+      ctx.restore();
+      text(name, x - 78, y - 14, { size: 44, weight: 800, color: c, alpha: a, align: 'left', glow: 16 });
+      text(sub2, x - 78, y + 30, { size: 26, weight: 500, color: WH, alpha: a * .8, align: 'left', glow: 0 });
+    });
+    // big statement
+    const sa = win(t, 22.9, 25.05, .3, .35);
+    if (sa > 0) pill('Это один и тот же отрезок!', W / 2, H - 100, WH, sa, { size: 58, scale: .8 + .2 * eback(prog(t, 22.9, 23.35)) });
+  }
+
+  vignette();
+  // ---- labels ----
+  const labA = t < 25.1 ? 1 : 1 - prog(t, 25.1, 25.5);
+  vertexLabel('A', A, 2.0, t, WH, [0, 0], labA);
+  vertexLabel('B', B, 2.15, t, WH, [0, 0], labA);
+  vertexLabel('C', C, 2.3, t, WH, [0, 0], labA);
+  if (t > 18.2) { const p = obj(Hp, false); const k = eback(prog(t, 18.2, 18.6)); ctx.save(); ctx.translate(p[0], p[1] + 50); ctx.scale(k, k); text('H', 0, 0, { size: 44, weight: 800, color: WH, alpha: clamp((t - 18.2) * 3) * labA, glow: 20 }); ctx.restore(); }
+
+  // ---- title (1.8 - 4.4) then header ----
+  {
+    const k = prog(t, 1.75, 2.5), out = prog(t, 3.7, 4.3);
+    if (k > 0 && out < 1) {
+      const s = 'Равнобедренный треугольник';
+      ctx.save();
+      const y = lerp(150, 110, eio(out)), sc = lerp(1, .55, eio(out));
+      ctx.translate(W / 2, y); ctx.scale(sc, sc);
+      // per-letter reveal
+      ctx.font = '800 96px M'; ctx.letterSpacing = '2px';
+      const total = ctx.measureText(s).width;
+      let x = -total / 2;
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i]; const w = ctx.measureText(ch).width + 2;
+        const lk = eback(prog(t, 1.75 + i * .025, 2.15 + i * .025));
+        const la = clamp(prog(t, 1.75 + i * .025, 2.05 + i * .025)) * (1 - out);
+        const col = mixC(TQ, PK, i / s.length);
+        ctx.save(); ctx.translate(x + w / 2, (1 - lk) * 40); ctx.scale(lk, lk);
+        text(ch, 0, 0, { size: 96, weight: 800, color: col, alpha: la, glow: 30 });
+        ctx.restore();
+        x += w;
+      }
+      // underline sweep
+      const uk = eio(prog(t, 2.2, 2.9));
+      if (uk > 0) {
+        ctx.save(); ctx.globalAlpha = 1 - out;
+        const g = ctx.createLinearGradient(-total / 2, 0, total / 2, 0); g.addColorStop(0, TQ); g.addColorStop(.5, OR); g.addColorStop(1, PK);
+        ctx.fillStyle = g; ctx.shadowColor = OR; ctx.shadowBlur = 20;
+        ctx.fillRect(-total / 2, 70, total * uk, 6);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    // header chip (top-left)
+    const ha = win(t, 4.0, 25.1, .5, .4);
+    if (ha > 0) {
+      const dx = (1 - eout(prog(t, 4.0, 4.6))) * -60;
+      ctx.save(); ctx.globalAlpha = ha;
+      ctx.fillStyle = TQ; ctx.shadowColor = TQ; ctx.shadowBlur = 16; ctx.fillRect(80 + dx, 64, 6, 66); ctx.restore();
+      text('ГЕОМЕТРИЯ', 106 + dx, 80, { size: 22, weight: 700, color: TQ, alpha: ha * .9, align: 'left', glow: 8, spacing: 6 });
+      text('Равнобедренный треугольник', 106 + dx, 114, { size: 34, weight: 800, color: WH, alpha: ha, align: 'left', glow: 10 });
+    }
+  }
+
+  captions(t);
+
+  // ---- finale (25 - 30) ----
+  {
+    const cards = [
+      [25.35, 'AB = BC', 'боковые стороны', TQ, -1],
+      [25.8, '∠A = ∠C', 'углы при основании', PK, 1],
+      [26.25, 'BH', 'высота · медиана · биссектриса', OR, 0],
+    ];
+    cards.forEach(([t0, big, small, c, side]) => {
+      const a = win(t, t0, 30.5, .4, .3); if (a <= 0) return;
+      const k = eback(prog(t, t0, t0 + .5));
+      let x, y;
+      if (side === -1) { x = 400; y = 340; } else if (side === 1) { x = W - 400; y = 340; } else { x = W / 2; y = 160; }
+      const bob = Math.sin(t * 2 + side) * 6;
+      ctx.save(); ctx.translate(x, y + bob); ctx.scale(k, k); ctx.globalAlpha = a;
+      const w = side === 0 ? 640 : 480, h = 150;
+      roundRect(-w / 2, -h / 2, w, h, 26); ctx.fillStyle = 'rgba(6,14,38,0.75)'; ctx.fill();
+      ctx.shadowColor = c; ctx.shadowBlur = 26; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.stroke();
+      ctx.restore();
+      ctx.save(); ctx.translate(x, y + bob); ctx.scale(k, k);
+      text(big, 0, -20, { size: 54, weight: 800, color: c, alpha: a, glow: 22 });
+      text(small, 0, 36, { size: 28, weight: 600, color: WH, alpha: a * .85, glow: 0 });
+      ctx.restore();
+    });
+    // final phrase
+    const fa = win(t, 26.7, 31, .5, .3);
+    if (fa > 0) {
+      const k = eback(prog(t, 26.7, 27.3));
+      ctx.save(); ctx.translate(W / 2, H - 175); ctx.scale(.8 + .2 * k, .8 + .2 * k);
+      text('Запомни:', 0, -58, { size: 46, weight: 800, color: OR, alpha: fa, glow: 24, spacing: 4 });
+      text('две стороны равны — углы при основании равны', 0, 22, { size: 58, weight: 800, color: WH, alpha: fa, glow: 26 });
+      // underline gradient
+      const uk = eio(prog(t, 27.1, 27.9));
+      ctx.globalAlpha = fa;
+      const g = ctx.createLinearGradient(-640, 0, 640, 0); g.addColorStop(0, TQ); g.addColorStop(.5, OR); g.addColorStop(1, PK);
+      ctx.fillStyle = g; ctx.shadowColor = PK; ctx.shadowBlur = 18; ctx.fillRect(-640 * uk, 78, 1280 * uk, 5);
+      ctx.restore();
+    }
+  }
+
+  // progress bar
+  {
+    const g = ctx.createLinearGradient(0, 0, W, 0); g.addColorStop(0, TQ); g.addColorStop(.5, OR); g.addColorStop(1, PK);
+    ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(0, H - 6, W, 6);
+    ctx.fillStyle = g; ctx.shadowColor = TQ; ctx.shadowBlur = 10; ctx.fillRect(0, H - 6, W * t / 30, 6); ctx.restore();
+  }
+
+  // fade from black / to black
+  const fb = Math.max(1 - prog(t, 0, .35), prog(t, 29.65, 30));
+  if (fb > 0) { ctx.fillStyle = `rgba(0,0,0,${fb})`; ctx.fillRect(0, 0, W, H); }
+}
+window.render = render;
+window.ready = document.fonts.load('800 40px M', 'АB').then(() => Promise.all([
+  document.fonts.load('700 40px M', 'АB'), document.fonts.load('500 40px M', 'АB')])).then(() => true);
+</script>
+</body></html>
